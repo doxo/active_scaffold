@@ -1,17 +1,12 @@
 module ActiveScaffold::Actions
   module List
     def self.included(base)
-      base.before_filter :list_authorized_filter, :only => [:index, :table, :row, :list]
+      base.before_filter :list_authorized_filter, :only => [:index, :row, :list]
       base.send :include, ActiveScaffold::Actions::Mark if base.active_scaffold_config.list.mark_records
     end
 
     def index
       list
-    end
-
-    def table
-      do_list
-      render(:action => 'list.html', :layout => false)
     end
 
     # get just a single row
@@ -28,7 +23,7 @@ module ActiveScaffold::Actions
     
     protected
     def list_respond_to_html
-      render :action => 'list'
+      render :action => 'list', :layout => !respond_to?(:nested?) || !nested?
     end
     def list_respond_to_js
       render :action => 'list.js'
