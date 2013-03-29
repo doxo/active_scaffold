@@ -1,5 +1,8 @@
 module ActiveScaffold::Config
-  class Core < Base
+  # to fix the ckeditor bridge problem
+  class Core < ActiveScaffold::Config::Base
+  # code commented out (see above)
+  #class Core < Base
     # global level configuration
     # --------------------------
 
@@ -12,7 +15,7 @@ module ActiveScaffold::Config
 
     # configures where the ActiveScaffold plugin itself is located. there is no instance version of this.
     cattr_accessor :plugin_directory
-    @@plugin_directory = File.expand_path(__FILE__).match(/vendor\/plugins\/([^\/]*)/)[1]
+    @@plugin_directory = File.expand_path(__FILE__).match(%{(^.*)/lib/active_scaffold/config/core.rb})[1]
 
     # lets you specify a global ActiveScaffold frontend.
     cattr_accessor :frontend
@@ -21,6 +24,10 @@ module ActiveScaffold::Config
     # lets you specify a global ActiveScaffold theme for your frontend.
     cattr_accessor :theme
     @@theme = :default
+
+    # enable caching of action link urls
+    cattr_accessor :cache_action_link_urls
+    @@cache_action_link_urls = true
 
     # lets you disable the DHTML history
     def self.dhtml_history=(val)
@@ -55,6 +62,15 @@ module ActiveScaffold::Config
 
     # lets you specify whether add a create link for each sti child
     cattr_accessor :sti_create_links
+    @@sti_create_links = true
+
+    # prefix messages with current timestamp, set the format to display (you can use I18n keys) or true and :short will be used
+    cattr_accessor :timestamped_messages
+    @@timestamped_messages = false
+
+    # a hash of string (or array of strings) and highlighter string to highlight words in messages. It will use highlight rails helper
+    cattr_accessor :highlight_messages
+    @@highlight_messages = nil
 
     # instance-level configuration
     # ----------------------------
@@ -79,6 +95,9 @@ module ActiveScaffold::Config
     # lets you override the global ActiveScaffold theme for a specific controller
     attr_accessor :theme
 
+    # enable caching of action link urls
+    attr_accessor :cache_action_link_urls
+
     # lets you specify whether add a create link for each sti child for a specific controller
     attr_accessor :sti_create_links
     def add_sti_create_links?
@@ -91,11 +110,17 @@ module ActiveScaffold::Config
     # a generally-applicable name for this ActiveScaffold ... will be used for generating page/section headers
     attr_writer :label
     def label(options={})
-      as_(@label, options) || model.human_name(options.merge(options[:count].to_i == 1 ? {} : {:default => model.name.pluralize}))
+      as_(@label, options) || model.model_name.human(options.merge(options[:count].to_i == 1 ? {} : {:default => model.name.pluralize}))
     end
 
     # STI children models, use an array of model names
     attr_accessor :sti_children
+
+    # prefix messages with current timestamp, set the format to display (you can use I18n keys) or true and :short will be used
+    attr_accessor :timestamped_messages
+
+    # a hash of string (or array of strings) and highlighter string to highlight words in messages. It will use highlight rails helper
+    attr_accessor :highlight_messages
 
     ##
     ## internal usage only below this point
@@ -103,7 +128,7 @@ module ActiveScaffold::Config
 
     def initialize(model_id)
       # model_id is the only absolutely required configuration value. it is also not publicly accessible.
-      @model_id = model_id.to_s.pluralize.singularize
+      @model_id = model_id
 
       # inherit the actions list directly from the global level
       @actions = self.class.actions.clone
@@ -121,21 +146,23 @@ module ActiveScaffold::Config
       # inherit the global frontend
       @frontend = self.class.frontend
       @theme = self.class.theme
+      @cache_action_link_urls = self.class.cache_action_link_urls
       @sti_create_links = self.class.sti_create_links
 
       # inherit from the global set of action links
       @action_links = self.class.action_links.clone
+      @timestamped_messages = self.class.timestamped_messages
+      @highlight_messages = self.class.highlight_messages
     end
 
     # To be called after your finished configuration
     def _load_action_columns
-      ActiveScaffold::DataStructures::ActionColumns.class_eval {include ActiveScaffold::DataStructures::ActionColumns::AfterConfiguration}
+      #ActiveScaffold::DataStructures::ActionColumns.class_eval {include ActiveScaffold::DataStructures::ActionColumns::AfterConfiguration}
 
       # then, register the column objects
       self.actions.each do |action_name|
         action = self.send(action_name)
-        next unless action.respond_to? :columns
-        action.columns.set_columns(self.columns)
+        action.columns.set_columns(self.columns) if action.respond_to?(:columns)
       end
     end
 
@@ -148,21 +175,7 @@ module ActiveScaffold::Config
         self.columns[column].form_ui ||= :select
         self.columns[column].options ||= {}
         self.columns[column].options[:options] = self.sti_children.collect do |model_name|
-          [model_name.to_s.camelize.constantize.human_name, model_name.to_s.camelize]
-        end
-      end
-    end
-
-    # To be called after include action modules
-    def _add_sti_create_links
-      new_action_link = @action_links['new']
-      unless new_action_link.nil?
-        @action_links.delete('new')
-        self.sti_children.each do |child| 
-          new_sti_link = Marshal.load(Marshal.dump(new_action_link)) # deep clone
-          new_sti_link.label = as_(:create_model, :model => child.to_s.camelize.constantize.human_name)
-          new_sti_link.parameters = {model.inheritance_column => child}
-          @action_links.add(new_sti_link)
+          [model_name.to_s.camelize.constantize.model_name.human, model_name.to_s.camelize]
         end
       end
     end
@@ -186,9 +199,9 @@ module ActiveScaffold::Config
     end
 
     def self.method_missing(name, *args)
-      klass = "ActiveScaffold::Config::#{name.to_s.titleize}".constantize rescue nil
+      klass = "ActiveScaffold::Config::#{name.to_s.camelcase}".constantize rescue nil
       if @@actions.include? name.to_s.underscore and klass
-        return eval("ActiveScaffold::Config::#{name.to_s.titleize}")
+        return eval("ActiveScaffold::Config::#{name.to_s.camelcase}")
       end
       super
     end
@@ -227,3 +240,4 @@ module ActiveScaffold::Config
     end
   end
 end
+

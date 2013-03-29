@@ -91,10 +91,6 @@ background-position: 1px 50%;
 background-repeat: no-repeat;
 }
 
-.view .active-scaffold-header div.actions a {
-float: left;
-}
-
 .blue-theme .active-scaffold-header div.actions a {
 color: #fff;
 }
@@ -672,8 +668,11 @@ padding: 2px;
 }
 
 .active-scaffold .fieldWithErrors input,
+.active-scaffold .field_with_errors input,
 .active-scaffold .fieldWithErrors textarea,
-.active-scaffold .fieldWithErrors select {
+.active-scaffold .field_with_errors textarea,
+.active-scaffold .fieldWithErrors select,
+.active-scaffold .field_with_errors select {
 border: solid 1px #f00;
 }
 

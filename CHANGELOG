@@ -1,3 +1,192 @@
+= 3.3.0 (not released yet)
+- Unify field overrides and list_ui method signatures
+- Improve performance removing some partials and adding some caching for helper overrides and UIs, and caching url generation for lists (caching url is optional)
+- Drop support for rails 3.1
+- Add HTML5 form fields
+- Add :chosen form_ui, and :chosen and :multi_chosen search_ui
+- Fix nested with has_one associations, and belongs_to associations with :list action
+- Support optgroup in :select and :chosen form_ui
+- Support render_form_field with multiple rows (rows with associated-record class)
+- Support for updating columns, row or table after updating a column with inplace_edit
+- Keep order for records in plural subforms, so new records are saved in same order as form order
+- Support add_subgroup in horizontal subforms
+- Improve support in helpers for using :select form_ui with polymorphic associations (needs to use a select to choose the class)
+- Allow to create in nested has_many :through associations, when source association is a belongs_to
+- Fix calculations using field_search with has_many includes
+- Add support to ActiveScaffold.create_record_row to insert after or before of an element
+- Add support for dynamic action group
+- Improve parsing of datetimes
+- Add support for lists filtered by id (one-item lists)
+- Fix update_columns with sending whole big forms
+- Improve update_columns on subforms
+- Support to override ActiveScaffold.remove so effects can be added on page elements deletion
+- Add support for conversion methods in controller, so form_uis can define how to convert params to values
+- Avoid sorting by contraint columns
+- Cosmetic fixes and improvements
+- Fix multipart persistent update form
+- Support jquery 1.9 (jquery-rails 2.2.0 gem)
+- Reduce usage of session
+- Allow to include header on list refreshing
+- Add search_joins to columns, so it's possible to do left joins without loading associations only for searching
+- Fix set focus for inplace edit clone and ajax
+- Allow to override label for list column headings with a new helper method column_heading_label
+- Keep focus on last field when render_field is called
+- Add empty create and update methods to tableless
+
+= 3.2.19
+- Avoid crashing when between is chosen and from or to is not filled
+
+= 3.2.18
+- Fix add existing record with record_select
+- Disable link for polymorphic associations in 3.2.x, it doesn't work
+
+= 3.2.17
+- fix constraints for columns with multiple columns in search_sql
+- remove unauthorized collection links
+- copy parameters and html_options on cloning action link
+- fix missing argument in datepicker conditions
+- check authorization in model for plural associations nested links
+- Allow to set action_group in nested.add_link
+- fix current page when is inside outer window
+- Support record select with polymorphic associations
+- Fix column count in inline adapter for forms and views
+- Add support for class prefix on human condition helpers
+
+= 3.2.16
+- Fix use of column.css_class in form when is a proc, it wasn't skipped when form was a columns group
+- Fix constraints and colspan in self-referential associations
+- Fix rendering parent row after creating or updating in a nested form (singular associations)
+- Translate include_blank and prompt in form_ui :select
+- Fix mark for nested scaffolds
+- Fix STI creation
+- Fix null search for numeric columns
+- Fix recordselect inplace_edit with plural associations in ruby 1.9
+
+= 3.2.15
+- Prepare to unify field overrides and list_ui method signatures
+- Add :optional to update.persistent
+- Add missing triggering of as:element_updated in new subform rows
+- Fix conditions for :select in field_search
+- Fix datetime field search
+- Fix authorization checking in member action links
+
+= 3.2.14
+- Fix default sorting, it was broken in 3.2.13
+
+= 3.2.13
+- Fix destroy action, was broken in 3.2.12
+- Remove default :method sorting for associations, it wasn't useful and can be slow
+- Rescue from ActiveScaffold::ActionNotAllowed and ActiveScaffold::RecordNotAllowed with 401 response, it can be overrided with deny_access method in ApplicationController.
+- Allow to set arrays in search_sql so one column can search in multiple db columns, resulting sql chunks will be OR'ed
+- Hide text input on searching for null or not null
+- Add some classes to forms to improve CSS customization
+- Fix nested links for STI controllers with common configuration in a base controller
+- Fix adding routes twice in active_scaffold generator
+- Restore old behavior for action_link's security_method, ignore_method already hides the link 
+- Add data-cancel-refresh to action links, so nested scaffold's behaviour can be applied to other action links and when adapter is closed row will be refreshed.
+- fix support for tableless models in rails >= 3.2.5
+
+= 3.2.12
+- improve support for tableless models, add support for count
+- fix div id for nested scaffolds
+- add config.timestamped_messages and config.highlight_messages
+- Improve performance using class to check authorization for plural associations which are not loaded, and avoiding to load associations if it's not needed
+- Fix using a scope in main form, it wasn't working for associations (for create multiple from active_scaffold_batch)
+- Fix searches with no results, it was loading first page without conditions
+- Allow to change highlight options with ActiveScaffold.js_config
+- allow to override column count calculation for colspan
+- Remove conditions_from_params from nested links
+- Fix nested forms for singular associations
+- enable to get constraints in helpers, so can be used in options_for_association_conditions, for example
+- Allow to edit has_one :through association in nested forms
+- Fix cancan bridge broken in a previous release
+- Fix mark action
+
+= 3.2.11
+- improve support for tableless models and active_scaffold_batch
+- fix count includes which were broken in 3.2.9
+- remove duplicated conditions in nested scaffolds, added by conditions_from_params
+
+= 3.2.10
+- fix nested scaffolds with update action disabled
+- initial work for tableless support (index with limited options)
+- fix scrolling on closing nested scaffolds
+- fix calculations which were broken in 3.2.9
+
+= 3.2.9
+- remove duplicated conditions with constraints
+- fix constraints for polymorphic associations
+
+= 3.2.8
+- add deprecation for update_column, update_columns should be used instead
+- fix constraints with hide_nested_column disabled in list and embedded scaffolds which are nested too
+- fix setting a hash as includes, cannot be concat in finder
+- add option to scroll on close only if element is not visible in viewport (default now)
+- fix create and edit singular associations without render_component
+- messages go across all table
+- display readonly associations in forms, it was ready to display them but it was skipping them
+- Some fixes for inplace editors (cloning form overrides, ajax and radiobuttons). Add handlers for empty columns
+- add wrap_tag to list so cells content can be wrapped in a tag for better styling
+- fix date picker parsing for datetime fields when jquery is used
+- add as:element_updated js event when replace or replace_html is called
+- rescue database exceptions so you get error messages for it insted of error 500, for example in case you forgot to check uniqueness for a unique index
+- add class attribute for displayed unauthorized columns in forms, so they get same styling
+
+= 3.2.7
+- restore missing update.persistent feature
+- fix create.persistent
+- add new record in first scaffold, not in all nested scaffolds
+- fix deleting all in habtm with select_ui
+
+= 3.2.6
+- fix ordering with DISTINCT call
+- allow to override some human condition strings in i18n, and translate select values for non-association columns
+
+= 3.2.5
+- add outer window for pagination links
+- workaround rails 3.2.3 bug in TimeWithZone#to_time
+- fix date picker format for datetime fields
+- fix bitfields bridge when some actions are not used
+- use core config label when is set and STI is not used
+
+= 3.2.4
+- don't break on custom SQL sorting (e.g. sorting with functions)
+- fix cancel inplace edit with jquery
+- fix nested scaffolds inside nested and embedded scaffolds
+- fix collapsed subgroups
+- fix inplace edit for checkboxes columns with true as default value
+- fix calendar date select bridge
+
+= 3.0.6 .. 3.2.3
+- many changes
+
+= 3.0.5
+
+- switch from explicit requires to autoloading
+- get nested action links up and running
+
+= 3.0.4
+
+- Fix a typo that made 3.0.3 unusable.
+
+= 3.0.3
+
+- Fixing 'require' ordering
+- Code for nested and subgrouped action links
+- bugfixes for better html generation
+
+= 3.0.2
+
+- Two bug fixes and a deprecation silencing.
+
+= 3.0.1
+
+- Fixing the requiring of files.
+
+= 3.0.0
+
+- Packaging up vhochstein's fork for Rails 3.0 as a gem.
+
 = 1.2RC1
 
 == FEATURES

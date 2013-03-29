@@ -3,18 +3,21 @@ module ActiveScaffold::DataStructures
     # provides a quick way to set any property of the object from a hash
     def initialize(action, options = {})
       # set defaults
-      self.action = action.to_s
+      self.action = action
       self.label = action
       self.confirm = false
       self.type = :collection
       self.inline = true
       self.method = :get
-      self.crud_type = :delete if [:destroy].include?(action.to_sym)
-      self.crud_type = :create if [:create, :new].include?(action.to_sym)
-      self.crud_type = :update if [:edit, :update].include?(action.to_sym)
+      self.crud_type = :delete if [:destroy].include?(action.try(:to_sym))
+      self.crud_type = :create if [:create, :new].include?(action.try(:to_sym))
+      self.crud_type = :update if [:edit, :update].include?(action.try(:to_sym))
       self.crud_type ||= :read
       self.parameters = {}
       self.html_options = {}
+      self.column = nil
+      self.image = nil
+      self.dynamic_parameters = nil
 
       # apply quick properties
       options.each_pair do |k, v|
@@ -27,10 +30,22 @@ module ActiveScaffold::DataStructures
     attr_accessor :action
     
     # the controller for this action link. if nil, the current controller should be assumed.
-    attr_accessor :controller
+    attr_writer :controller
+
+    def controller
+      @controller = @controller.call if @controller.is_a?(Proc)
+      @controller
+    end
+
+    def static_controller?
+      !(@controller.is_a?(Proc) || (@controller == :polymorph))
+    end
 
     # a hash of request parameters
     attr_accessor :parameters
+
+    # a block for dynamic_parameters
+    attr_accessor :dynamic_parameters
 
     # the RESTful method
     attr_accessor :method
@@ -40,26 +55,34 @@ module ActiveScaffold::DataStructures
     def label
       @label.is_a?(Symbol) ? as_(@label) : @label
     end
+    
+    # image to use {:name => 'arrow.png', :size => '16x16'}
+    attr_accessor :image
 
     # if the action requires confirmation
-    attr_writer :confirm
+    def confirm=(value)
+      @dhtml_confirm = nil if value
+      @confirm = value
+    end
     def confirm(label = '')
       @confirm.is_a?(String) ? @confirm : as_(@confirm, :label => label)
     end
     def confirm?
-      @confirm ? true : false
+      !!@confirm
     end
     
     # if the action uses a DHTML based (i.e. 2-phase) confirmation
-    attr_writer :dhtml_confirm
-    def dhtml_confirm
-      @dhtml_confirm
+    attr_accessor :dhtml_confirm
+    def dhtml_confirm=(value)
+      @confirm = nil if value
+      @dhtml_confirm = value
     end
     def dhtml_confirm?
-      @dhtml_confirm
+      !!@dhtml_confirm
     end
 
     # what method to call on the controller to see if this action_link should be visible
+    # if method return false, link will be disabled
     # note that this is only the UI part of the security. to prevent URL hax0rz, you also need security on requests (e.g. don't execute update method unless authorized).
     attr_writer :security_method
     def security_method
@@ -70,6 +93,13 @@ module ActiveScaffold::DataStructures
       !!@security_method
     end
 
+    # enable it to refresh the parent row when the view is closed
+    attr_accessor :refresh_on_close
+    
+    # what method to call on the controller to see if this action_link should be visible
+    # if method return true, link won't be displayed
+    attr_accessor :ignore_method
+    
     # the crud type of the (eventual?) action. different than :method, because this crud action may not be imminent.
     # this is used to determine record-level authorization (e.g. record.authorized_for?(:crud_type => link.crud_type).
     # options are :create, :read, :update, and :delete
@@ -138,5 +168,25 @@ module ActiveScaffold::DataStructures
 
     # html options for the link
     attr_accessor :html_options
+    
+    # nested action_links are referencing a column
+    attr_accessor :column
+    
+    # don't close the panel when another action link is open 
+    attr_writer :keep_open
+    def keep_open?
+      @keep_open
+    end
+    
+    # indicates that this a nested_link
+    def nested_link?
+      @column || (parameters && parameters[:named_scope])
+    end
+    
+    def name_to_cache_link_url
+      @name_to_cache_link_url ||= :"#{controller || 'self'}_#{action}#{'_' if parameters.present?}#{parameters.map{|k,v| "#{k}_#{v}"}.join('_')}_link_url"
+    end
+    
+    
   end
 end

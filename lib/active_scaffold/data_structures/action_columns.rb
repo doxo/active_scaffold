@@ -1,6 +1,6 @@
 module ActiveScaffold::DataStructures
   # A set of columns. These structures can be nested for organization.
-  class ActionColumns < Set
+  class ActionColumns < ActiveScaffold::DataStructures::Set
     include ActiveScaffold::Configurable
 
     # this lets us refer back to the action responsible for this link, if it exists.
@@ -12,10 +12,23 @@ module ActiveScaffold::DataStructures
     def label
       as_(@label) if @label
     end
+    def css_class
+      @label.to_s.underscore
+    end
+
+    # this is so that array.delete and array.include?, etc., will work by column name
+    def ==(other) #:nodoc:
+      # another ActionColumns
+      if other.class == self.class
+        self.label == other.label
+      else
+        @label.to_s == other.to_s
+      end
+    end
 
     # Whether this column set is collapsed by default in contexts where collapsing is supported
     attr_accessor :collapsed
-
+    
     # nests a subgroup in the column set
     def add_subgroup(label, &proc)
       columns = ActiveScaffold::DataStructures::ActionColumns.new
@@ -35,23 +48,20 @@ module ActiveScaffold::DataStructures
     end
 
     def names
-      self.collect(&:name)
+      if @columns
+        self.collect_visible(:flatten => true) { |c| c.name }
+      else
+        names_without_auth_check
+      end
     end
 
-    protected
-
-    def collect_columns
-      @set.collect {|col| col.is_a?(ActiveScaffold::DataStructures::ActionColumns) ? col.collect_columns : col}
-    end
-
-    # called during clone or dup. makes the clone/dup deeper.
-    def initialize_copy(from)
-      @set = from.instance_variable_get('@set').clone
+    def names_without_auth_check
+      Array(@set)
     end
 
     # A package of stuff to add after the configuration block. This is an attempt at making a certain level of functionality inaccessible during configuration, to reduce possible breakage from misuse.
     # The bulk of the package is a means of connecting the referential column set (ActionColumns) with the actual column objects (Columns). This lets us iterate over the set and yield real column objects.
-    module AfterConfiguration
+    #module AfterConfiguration
       # Redefine the each method to yield actual Column objects.
       # It will skip constrained and unauthorized columns.
       #
@@ -59,24 +69,53 @@ module ActiveScaffold::DataStructures
       #  * :flatten - whether to recursively iterate on nested sets. default is false.
       #  * :for - the record (or class) being iterated over. used for column-level security. default is the class.
       def each(options = {}, &proc)
-        options[:for] ||= @columns.active_record_class
-
+        options[:for] ||= @columns.active_record_class unless @columns.nil?
+        self.unauthorized_columns = []
         @set.each do |item|
-          unless item.is_a? ActiveScaffold::DataStructures::ActionColumns
+          unless item.is_a?(ActiveScaffold::DataStructures::ActionColumns) || @columns.nil?
             item = (@columns[item] || ActiveScaffold::DataStructures::Column.new(item.to_sym, @columns.active_record_class))
-            # skip if this matches a constrained column
-            next if constraint_columns.include?(item.name.to_sym)
-            # skip if this matches the field_name of a constrained column
-            next if item.field_name and constraint_columns.include?(item.field_name.to_sym)
-            # skip this field if it's not authorized
-            next unless options[:for].authorized_for?(:action => options[:action], :crud_type => options[:crud_type] || self.action.crud_type, :column => item.name)
+            next if self.skip_column?(item, options)
           end
-          if item.is_a? ActiveScaffold::DataStructures::ActionColumns and options.has_key?(:flatten) and options[:flatten]
-            item.each(options, &proc)
+          if item.is_a? ActiveScaffold::DataStructures::ActionColumns
+            if options[:flatten]
+              item.each(options, &proc)
+            elsif !options[:skip_groups]
+              yield item
+            end
           else
             yield item
           end
         end
+      end
+      
+      def collect_visible(options = {}, &proc)
+        columns = []
+        options[:for] ||= @columns.active_record_class
+        self.unauthorized_columns = []
+        @set.each do |item|
+          unless item.is_a? ActiveScaffold::DataStructures::ActionColumns
+            item = (@columns[item] || ActiveScaffold::DataStructures::Column.new(item.to_sym, @columns.active_record_class))
+            next if self.skip_column?(item, options)
+          end
+          if item.is_a? ActiveScaffold::DataStructures::ActionColumns and options.has_key?(:flatten) and options[:flatten]
+            columns += item.collect_visible(options, &proc)
+          else
+            columns << (block_given? ? yield(item) : item)
+          end
+        end
+        columns
+      end      
+      
+      def skip_column?(column, options)
+        result = false
+        # skip if this matches a constrained column
+        result = true if constraint_columns.include?(column.name.to_sym)
+        # skip this field if it's not authorized
+        unless options[:for].authorized_for?(:action => options[:action], :crud_type => options[:crud_type] || self.action.crud_type, :column => column.name)
+          self.unauthorized_columns << column.name.to_sym
+          result = true
+        end
+        return result
       end
 
       # registers a set of column objects (recursively, for all nested ActionColumns)
@@ -93,9 +132,25 @@ module ActiveScaffold::DataStructures
         @constraint_columns ||= []
       end
       
-      def length
-        (@set - self.constraint_columns).length
+      attr_writer :unauthorized_columns
+      def unauthorized_columns
+        @unauthorized_columns ||= []
       end
+      
+      def length
+        ((@set - self.constraint_columns) - self.unauthorized_columns).length
+      end
+    #end
+
+    protected
+
+    def collect_columns
+      @set.collect {|col| col.is_a?(ActiveScaffold::DataStructures::ActionColumns) ? col.collect_columns : col}
+    end
+
+    # called during clone or dup. makes the clone/dup deeper.
+    def initialize_copy(from)
+      @set = from.instance_variable_get('@set').clone
     end
   end
 end

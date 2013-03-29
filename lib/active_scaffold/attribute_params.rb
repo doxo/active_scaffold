@@ -60,29 +60,22 @@ module ActiveScaffold
 
           # we avoid assigning a value that already exists because otherwise has_one associations will break (AR bug in has_one_association.rb#replace)
           parent_record.send("#{column.name}=", value) unless parent_record.send(column.name) == value
-          
-        # plural associations may not actually appear in the params if all of the options have been unselected or cleared away.
-        # the "form_ui" check is necessary, becuase without it we have problems
-        # with subforms. the UI cuts out deep associations, which means they're not present in the
-        # params even though they're in the columns list. the result is that associations were being
-        # emptied out way too often.
-        elsif column.form_ui and column.plural_association?
-          parent_record.send("#{column.name}=", [])
         end
       end
 
       if parent_record.new_record?
         parent_record.class.reflect_on_all_associations.each do |a|
           next unless [:has_one, :has_many].include?(a.macro) and not (a.options[:through] || a.options[:finder_sql])
-          next unless association_proxy = parent_record.send(a.name)
+          next unless (association_proxy = parent_record.send(a.name)).present?
 
-          raise ActiveScaffold::ReverseAssociationRequired, "Association #{a.name}: In order to support :has_one and :has_many where the parent record is new and the child record(s) validate the presence of the parent, ActiveScaffold requires the reverse association (the belongs_to)." unless a.reverse
+          raise ActiveScaffold::ReverseAssociationRequired, "Association #{a.name} in class #{parent_record.class.name}: In order to support :has_one and :has_many where the parent record is new and the child record(s) validate the presence of the parent, ActiveScaffold requires the reverse association (the belongs_to)." unless a.reverse
 
           association_proxy = [association_proxy] if a.macro == :has_one
           association_proxy.each { |record| record.send("#{a.reverse}=", parent_record) }
         end
       end
-
+    
+      flash[:warning] = parent_record.errors.to_a.join("\n") if parent_record.errors.present?
       parent_record
     end
     
@@ -90,6 +83,7 @@ module ActiveScaffold
       record = find_or_create_for_params(attributes, column, parent_record)
       if record
         record_columns = active_scaffold_config_for(column.association.klass).subform.columns
+        record_columns.constraint_columns = [column.association.reverse]
         update_record_from_params(record, record_columns, attributes)
         record.unsaved = true
       end
@@ -98,104 +92,132 @@ module ActiveScaffold
     
     def column_value_from_param_value(parent_record, column, value)
       # convert the value, possibly by instantiating associated objects
-      if value.is_a?(Hash)
-        # this is just for backwards compatibility. we should clean this up in 2.0.
-        if column.form_ui == :select
-          ids = if column.singular_association?
-            value[:id]
-          else
-            value.values.collect {|hash| hash[:id]}
-          end
-          (ids and not ids.empty?) ? column.association.klass.find(ids) : nil
-
-        elsif column.singular_association?
-          manage_nested_record_from_params(parent_record, column, value)
-        elsif column.plural_association?
-          value.collect {|key_value_pair| manage_nested_record_from_params(parent_record, column, key_value_pair[1])}.compact
-        else
-          value
-        end
+      form_ui = column.form_ui || column.column.try(:type)
+      if form_ui && self.respond_to?("column_value_for_#{form_ui}_type")
+        self.send("column_value_for_#{form_ui}_type", parent_record, column, value)
+      elsif value.is_a?(Hash)
+        column_value_from_param_hash_value(parent_record, column, value)
       else
-        if column.singular_association?
-          # it's a single id
-          column.association.klass.find(value) if value and not value.empty?
-        elsif column.plural_association?
-          # it's an array of ids
-          column.association.klass.find(value) if value and not value.empty?
-        elsif column.column && column.column.number? && column.options[:format]
-          native = '.' # native ruby separator
-          format = {:separator => '', :delimiter => ''}.merge! I18n.t('number.format', :default => {})
-          specific = case column.options[:format]
-          when :currency
-            I18n.t('number.currency.format', :default => nil)
-          when :size
-            I18n.t('number.human.format', :default => nil)
-          when :percentage
-            I18n.t('number.percentage.format', :default => nil)
-          end
-          format.merge! specific unless specific.nil?
-          unless format[:separator].blank? || !value.include?(format[:separator]) && value.include?(native) && (format[:delimiter] != native || value !~ /\.\d{3}$/)
-            value.gsub(/[^0-9\-#{format[:separator]}]/, '').gsub(format[:separator], native)
+        column_value_from_param_simple_value(parent_record, column, value)
+      end
+    end
+    
+    def datetime_conversion_for_value(column)
+      if column.column
+        column.column.type == :date ? :to_date : :to_time
+      else
+        :to_time
+      end
+    end
+    
+    def column_value_for_datetime_type(parent_record, column, value)
+      new_value = self.class.condition_value_for_datetime(column, value, self.class.datetime_conversion_for_condition(column))
+      if new_value.nil? && value.present?
+        parent_record.errors.add column.name, :invalid
+      end
+      new_value
+    end
+
+    def column_value_from_param_simple_value(parent_record, column, value)
+      if column.singular_association?
+        if value.present?
+          if column.polymorphic_association?
+            class_name = parent_record.send(column.association.foreign_type)
+            class_name.constantize.find(value) if class_name
           else
-            value
+            # it's a single id
+            column.association.klass.find(value)
           end
-        else
-          # convert empty strings into nil. this works better with 'null => true' columns (and validations),
-          # and 'null => false' columns should just convert back to an empty string.
-          # ... but we can at least check the ConnectionAdapter::Column object to see if nulls are allowed
-          value = nil if value.is_a? String and value.empty? and !column.column.nil? and column.column.null
-          value
         end
+      elsif column.plural_association?
+        column_plural_assocation_value_from_value(column, Array(value))
+      elsif column.number? && [:i18n_number, :currency].include?(column.options[:format]) && column.form_ui != :number
+        self.class.i18n_number_to_native_format(value)
+      else
+        # convert empty strings into nil. this works better with 'null => true' columns (and validations),
+        # and 'null => false' columns should just convert back to an empty string.
+        # ... but we can at least check the ConnectionAdapter::Column object to see if nulls are allowed
+        value = nil if value.is_a? String and value.empty? and !column.column.nil? and column.column.null
+        value
       end
     end
 
-    # Attempts to create or find an instance of klass (which must be an ActiveRecord object) from the
+    def column_plural_assocation_value_from_value(column, value)
+      # it's an array of ids
+      if value and not value.empty?
+        ids = value.select {|id| id.present?}
+        ids.empty? ? [] : column.association.klass.find(ids)
+      end
+    end
+
+    def column_value_from_param_hash_value(parent_record, column, value)
+      # this is just for backwards compatibility. we should clean this up in 2.0.
+      if column.form_ui == :select
+        ids = if column.singular_association?
+          value[:id]
+        else
+          value.values.collect {|hash| hash[:id]}
+        end
+        (ids and not ids.empty?) ? column.association.klass.find(ids) : nil
+
+      elsif column.singular_association?
+        manage_nested_record_from_params(parent_record, column, value)
+      elsif column.plural_association?
+        # HACK to be able to delete all associated records, hash will include "0" => ""
+        value.sort.collect {|key, value| manage_nested_record_from_params(parent_record, column, value) unless value == ""}.compact
+      else
+        value
+      end
+    end
+
+   # Attempts to create or find an instance of klass (which must be an ActiveRecord object) from the
     # request parameters given. If params[:id] exists it will attempt to find an existing object
     # otherwise it will build a new one.
     def find_or_create_for_params(params, parent_column, parent_record)
       current = parent_record.send(parent_column.name)
       klass = parent_column.association.klass
+      pk = klass.primary_key.to_sym
       return nil if parent_column.show_blank_record?(current) and attributes_hash_is_empty?(params, klass)
 
-      if params.has_key? :id
+      if params.has_key? pk
         # modifying the current object of a singular association
-        if current and current.is_a? ActiveRecord::Base and current.id.to_s == params[:id]
-          return current
+        pk_val = params[pk] 
+        if current and current.is_a? ActiveRecord::Base and current.id.to_s == pk_val
+          current
         # modifying one of the current objects in a plural association
-        elsif current and current.respond_to?(:any?) and current.any? {|o| o.id.to_s == params[:id]}
-          return current.detect {|o| o.id.to_s == params[:id]}
+        elsif current and current.respond_to?(:any?) and current.any? {|o| o.id.to_s == pk_val}
+          current.detect {|o| o.id.to_s == pk_val}
         # attaching an existing but not-current object
         else
-          return klass.find(params[:id])
+          klass.find(pk_val)
         end
       else
-        if klass.authorized_for?(:crud_type => :create)
-          if parent_column.singular_association?
-            return parent_record.send("build_#{parent_column.name}")
-          else
-            return parent_record.send(parent_column.name).build
-          end
-        end
+        build_associated(parent_column, parent_record) if klass.authorized_for?(:crud_type => :create)
       end
     end
-
     # Determines whether the given attributes hash is "empty".
     # This isn't a literal emptiness - it's an attempt to discern whether the user intended it to be empty or not.
     def attributes_hash_is_empty?(hash, klass)
+      ignore_column_types = [:boolean]
       hash.all? do |key,value|
         # convert any possible multi-parameter attributes like 'created_at(5i)' to simply 'created_at'
-        column_name = key.to_s.split('(').first
+        parts = key.to_s.split('(')
+        #old style date form management... ignore them too
+        ignore_column_types = [:boolean, :datetime, :date, :time] if parts.length > 1
+        column_name = parts.first
         column = klass.columns_hash[column_name]
 
         # booleans and datetimes will always have a value. so we ignore them when checking whether the hash is empty.
         # this could be a bad idea. but the current situation (excess record entry) seems worse.
-        next true if column and [:boolean, :datetime, :date, :time].include?(column.type)
+        next true if column and ignore_column_types.include?(column.type)
 
         # defaults are pre-filled on the form. we can't use them to determine if the user intends a new row.
         next true if column and value == column.default.to_s
 
         if value.is_a?(Hash)
           attributes_hash_is_empty?(value, klass)
+        elsif value.is_a?(Array)
+          value.any? {|id| id.respond_to?(:empty?) ? !id.empty? : true}
         else
           value.respond_to?(:empty?) ? value.empty? : false
         end

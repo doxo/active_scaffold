@@ -2,9 +2,7 @@ module ActiveScaffold::Actions
   module Update
     def self.included(base)
       base.before_filter :update_authorized_filter, :only => [:edit, :update]
-      base.verify :method => [:post, :put],
-                  :only => :update,
-                  :redirect_to => { :action => :index }
+      base.helper_method :update_refresh_list?
     end
 
     def edit
@@ -20,7 +18,7 @@ module ActiveScaffold::Actions
     # for inline (inlist) editing
     def update_column
       do_update_column
-      render :action => 'update_column'
+      @column_span_id = params.delete(:editor_id) || params.delete(:editorId)
     end
 
     protected
@@ -34,10 +32,11 @@ module ActiveScaffold::Actions
     def edit_respond_to_js
       render(:partial => 'update_form')
     end
-    def update_respond_to_html  
+    def update_respond_to_html
       if params[:iframe]=='true' # was this an iframe post ?
+        do_refresh_list if successful? && active_scaffold_config.create.refresh_list && !render_parent?
         responds_to_parent do
-          render :action => 'on_update.js'
+          render :action => 'on_update', :formats => [:js], :layout => false
         end
       else # just a regular post
         if successful?
@@ -49,6 +48,17 @@ module ActiveScaffold::Actions
       end
     end
     def update_respond_to_js
+      if successful?
+        if !render_parent? && active_scaffold_config.actions.include?(:list)
+          if update_refresh_list?
+            do_refresh_list
+          else
+            # get_row so associations are cached like in list action
+            @record = get_row rescue nil # if record doesn't fullfil current conditions remove it from list
+          end
+        end
+        flash.now[:info] = as_(:updated_model, :model => @record.to_label) if active_scaffold_config.update.persistent
+      end
       render :action => 'on_update'
     end
     def update_respond_to_xml
@@ -60,6 +70,7 @@ module ActiveScaffold::Actions
     def update_respond_to_yaml
       render :text => Hash.from_xml(response_object.to_xml(:only => active_scaffold_config.update.columns.names)).to_yaml, :content_type => Mime::YAML, :status => response_status
     end
+
     # A simple method to find and prepare a record for editing
     # May be overridden to customize the record (set default values, etc.)
     def do_edit
@@ -70,35 +81,65 @@ module ActiveScaffold::Actions
     # If you want to customize this algorithm, consider using the +before_update_save+ callback
     def do_update
       do_edit
+      update_save
+    end
+
+    def update_save(options = {})
+      attributes = options[:attributes] || params[:record]
       begin
         active_scaffold_config.model.transaction do
-          @record = update_record_from_params(@record, active_scaffold_config.update.columns, params[:record])
+          @record = update_record_from_params(@record, active_scaffold_config.update.columns, attributes) unless options[:no_record_param_update]
           before_update_save(@record)
-          self.successful = [@record.valid?, @record.associated_valid?].all? {|v| v == true} # this syntax avoids a short-circuit
+          self.successful = [@record.valid?, @record.associated_valid?].all? # this syntax avoids a short-circuit
           if successful?
             @record.save! and @record.save_associated!
             after_update_save(@record)
+          else
+            # some associations such as habtm are saved before saved is called on parent object
+            # we have to revert these changes if validation fails
+            raise ActiveRecord::Rollback, "don't save habtm associations unless record is valid"
           end
         end
-      rescue ActiveRecord::RecordInvalid
       rescue ActiveRecord::StaleObjectError
-        @record.errors.add_to_base as_(:version_inconsistency)
-        self.successful=false
+        @record.errors.add(:base, as_(:version_inconsistency))
+        self.successful = false
       rescue ActiveRecord::RecordNotSaved
-        @record.errors.add_to_base as_("Failed to save record cause of an unknown error") if @record.errors.empty?
+        @record.errors.add(:base, as_(:record_not_saved)) if @record.errors.empty?
+        self.successful = false
+      rescue ActiveRecord::ActiveRecordError => ex
+        flash[:error] = ex.message
         self.successful = false
       end
     end
 
     def do_update_column
-      @record = active_scaffold_config.model.find(params[:id])
-      if @record.authorized_for?(:crud_type => :update, :column => params[:column])
-        column = active_scaffold_config.columns[params[:column].to_sym]
-        params[:value] ||= @record.column_for_attribute(params[:column]).default unless @record.column_for_attribute(params[:column]).nil? || @record.column_for_attribute(params[:column]).null
-        params[:value] = column_value_from_param_value(@record, column, params[:value]) unless column.nil?
-        @record.send("#{params[:column]}=", params[:value])
+      # delete from params so update :table won't break urls, also they shouldn't be used in sort links too
+      value = params.delete(:value)
+      column = params.delete(:column).to_sym
+      params.delete(:original_html)
+      params.delete(:original_value)
+
+      @record = find_if_allowed(params[:id], :read)
+      if @record.authorized_for?(:crud_type => :update, :column => column)
+        @column = active_scaffold_config.columns[column]
+        value ||= unless @column.column.nil? || @column.column.null
+          @column.column.default == true ? false : @column.column.default
+        end
+        unless @column.nil?
+          value = column_value_from_param_value(@record, @column, value)
+          value = [] if value.nil? && @column.form_ui && @column.plural_association?
+        end
+        @record.send("#{@column.name}=", value)
         before_update_save(@record)
-        @record.save
+        self.successful = @record.save
+        if self.successful? && active_scaffold_config.actions.include?(:list)
+          if @column.inplace_edit_update == :table
+            params.delete(:id)
+            do_list
+          elsif @column.inplace_edit_update
+            get_row
+          end
+        end
         after_update_save(@record)
       end
     end
@@ -109,10 +150,18 @@ module ActiveScaffold::Actions
     # override this method if you want to do something after the save
     def after_update_save(record); end
 
+    # should we refresh whole list after update operation
+    def update_refresh_list?
+      active_scaffold_config.update.refresh_list
+    end
+
     # The default security delegates to ActiveRecordPermissions.
     # You may override the method to customize.
-    def update_authorized?
-      authorized_for?(:crud_type => :update)
+    def update_authorized?(record = nil)
+      (!nested? || !nested.readonly?) && (record || self).authorized_for?(:crud_type => :update)
+    end
+    def update_ignore?(record = nil)
+      !self.authorized_for?(:crud_type => :update)
     end
     private
     def update_authorized_filter

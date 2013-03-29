@@ -2,10 +2,6 @@ module ActiveScaffold::Actions
   module Create
     def self.included(base)
       base.before_filter :create_authorized_filter, :only => [:new, :create]
-      base.prepend_before_filter :constraints_for_nested_create, :only => [:new, :create]
-      base.verify :method => :post,
-                  :only => :create,
-                  :redirect_to => { :action => :index }
     end
 
     def new
@@ -15,7 +11,6 @@ module ActiveScaffold::Actions
 
     def create
       do_create
-      @insert_row = params[:parent_controller].nil?
       respond_to_action(:create)
     end
 
@@ -38,23 +33,23 @@ module ActiveScaffold::Actions
 
     def create_respond_to_html
       if params[:iframe]=='true' # was this an iframe post ?
+        do_refresh_list if successful? && active_scaffold_config.create.refresh_list && !render_parent?
         responds_to_parent do
-          render :action => 'on_create.js'
+          render :action => 'on_create', :formats => [:js], :layout => false
         end
       else
         if successful?
           flash[:info] = as_(:created_model, :model => @record.to_label)
-          if active_scaffold_config.create.edit_after_create
-            redirect_to params_for(:action => "edit", :id => @record.id)
+          if action = active_scaffold_config.create.action_after_create
+            redirect_to params_for(:action => action, :id => @record.id)
           elsif active_scaffold_config.create.persistent
             redirect_to params_for(:action => "new")
           else
             return_to_main
           end
         else
-          if params[:nested].nil? && active_scaffold_config.actions.include?(:list) && active_scaffold_config.list.always_show_create
-            do_list
-            render(:action => 'list')
+          if active_scaffold_config.actions.include?(:list) && active_scaffold_config.list.always_show_create
+            list
           else
             render(:action => 'create')
           end
@@ -63,6 +58,7 @@ module ActiveScaffold::Actions
     end
 
     def create_respond_to_js
+      do_refresh_list if successful? && active_scaffold_config.create.refresh_list && !render_parent?
       render :action => 'on_create'
     end
 
@@ -78,52 +74,39 @@ module ActiveScaffold::Actions
       render :text => Hash.from_xml(response_object.to_xml(:only => active_scaffold_config.create.columns.names)).to_yaml, :content_type => Mime::YAML, :status => response_status, :location => response_location
     end
 
-    def constraints_for_nested_create
-      if params[:parent_column] && params[:parent_id]
-        @old_eid = params[:eid]
-        @remove_eid = true
-        constraints = {params[:parent_column].to_sym => params[:parent_id]}
-        params[:eid] = Digest::MD5.hexdigest(params[:parent_controller] + params[:controller].to_s + constraints.to_s)
-        session["as:#{params[:eid]}"] = {:constraints => constraints}
-      end
-    end
-
     # A simple method to find and prepare an example new record for the form
     # May be overridden to customize the behavior (add default values, for instance)
     def do_new
       @record = new_model
       apply_constraints_to_record(@record)
-      params[:eid] = @old_eid if @remove_eid
+      create_association_with_parent(@record) if nested?
       @record
     end
 
     # A somewhat complex method to actually create a new record. The complexity is from support for subforms and associated records.
     # If you want to customize this behavior, consider using the +before_create_save+ and +after_create_save+ callbacks.
-    def do_create
+    def do_create(options = {})
+      attributes = options[:attributes] || params[:record]
       begin
         active_scaffold_config.model.transaction do
-          @record = update_record_from_params(new_model, active_scaffold_config.create.columns, params[:record])
+          @record = update_record_from_params(new_model, active_scaffold_config.create.columns, attributes)
           apply_constraints_to_record(@record, :allow_autosave => true)
-          params[:eid] = @old_eid if @remove_eid
+          create_association_with_parent(@record) if nested?
           before_create_save(@record)
-          self.successful = [@record.valid?, @record.associated_valid?].all? {|v| v == true} # this syntax avoids a short-circuit
-          if successful?
-            @record.save! and @record.save_associated!
-            after_create_save(@record)
-          end
+          self.successful = [@record.valid?, @record.associated_valid?].all? # this syntax avoids a short-circuit
+          create_save(@record) unless options[:skip_save]
         end
-      rescue ActiveRecord::RecordInvalid
+      rescue ActiveRecord::ActiveRecordError => ex
+        flash[:error] = ex.message
+        self.successful = false
       end
     end
 
-    def new_model
-      model = active_scaffold_config.model
-      if model.columns_hash[model.inheritance_column]
-        params = self.params # in new action inheritance_column must be in params
-        params = params[:record] || {} unless params[model.inheritance_column] # in create action must be inside record key
-        model = params.delete(model.inheritance_column).camelize.constantize if params[model.inheritance_column]
+    def create_save(record)
+      if successful?
+        record.save! and record.save_associated!
+        after_create_save(record)
       end
-      model.new
     end
 
     # override this method if you want to inject data in the record (or its associated objects) before the save
@@ -134,8 +117,13 @@ module ActiveScaffold::Actions
 
     # The default security delegates to ActiveRecordPermissions.
     # You may override the method to customize.
+    
+    def create_ignore?
+      active_scaffold_config.list.always_show_create
+    end
+    
     def create_authorized?
-      authorized_for?(:crud_type => :create)
+      !(nested? && (nested.readonly? || nested.readonly_through_association?)) && authorized_for?(:crud_type => :create)
     end
     private
     def create_authorized_filter

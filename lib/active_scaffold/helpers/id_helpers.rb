@@ -6,8 +6,12 @@ module ActiveScaffold
         controller.to_s.gsub("/", "__").html_safe
       end
 
-      def controller_id
-        @controller_id ||= 'as_' + id_from_controller(params[:eid] || params[:parent_controller] || params[:controller])
+      def controller_id(controller = (params[:eid] || nested_id || params[:parent_controller] || params[:controller]))
+        controller_id ||= 'as_' + id_from_controller(controller)
+      end
+
+      def nested_id
+        "#{nested.parent_scaffold.controller_path}-#{nested.parent_id}-#{params[:controller]}" if nested?
       end
 
       def active_scaffold_id
@@ -22,12 +26,12 @@ module ActiveScaffold
         "#{controller_id}-tbody"
       end
 
-      def active_scaffold_messages_id
-        "#{controller_id}-messages"
+      def active_scaffold_messages_id(options = {})
+        "#{options[:controller_id] || controller_id}-messages"
       end
 
-      def active_scaffold_calculations_id(column = nil)
-        "#{controller_id}-calculations#{'-' + column.name.to_s if column}"
+      def active_scaffold_calculations_id(options = {})
+        "#{options[:controller_id] || controller_id}-calculations#{'-' + options[:column].name.to_s if options[:column]}"
       end
 
       def empty_message_id
@@ -36,10 +40,6 @@ module ActiveScaffold
 
       def before_header_id
         "#{controller_id}-search-container"
-      end
-
-      def search_form_id
-        "#{controller_id}-search-form"
       end
 
       def search_input_id
@@ -58,14 +58,14 @@ module ActiveScaffold
       def element_row_id(options = {})
         options[:action] ||= params[:action]
         options[:id] ||= params[:id]
-        options[:id] ||= params[:parent_id]
-        clean_id "#{controller_id}-#{options[:action]}-#{options[:id]}-row"
+        options[:id] ||= nested.parent_id if nested?
+        clean_id "#{options[:controller_id] || controller_id}-#{options[:action]}-#{options[:id]}-row"
       end
 
       def element_cell_id(options = {})
         options[:action] ||= params[:action]
         options[:id] ||= params[:id]
-        options[:id] ||= params[:parent_id]
+        options[:id] ||= nested.parent_id if nested?
         options[:name] ||= params[:name]
         clean_id "#{controller_id}-#{options[:action]}-#{options[:id]}-#{options[:name]}-cell"
       end
@@ -73,7 +73,7 @@ module ActiveScaffold
       def element_form_id(options = {})
         options[:action] ||= params[:action]
         options[:id] ||= params[:id]
-        options[:id] ||= params[:parent_id]
+        options[:id] ||= nested.parent_id if nested?
         clean_id "#{controller_id}-#{options[:action]}-#{options[:id]}-form"
       end
 
@@ -84,34 +84,40 @@ module ActiveScaffold
 
       def loading_indicator_id(options = {})
         options[:action] ||= params[:action]
-        unless options[:id]
-          clean_id "#{controller_id}-#{options[:action]}-loading-indicator"
-        else
-          clean_id "#{controller_id}-#{options[:action]}-#{options[:id]}-loading-indicator"
-        end
+        clean_id "#{controller_id}-#{options[:action]}-#{options[:id]}-loading-indicator"
+      end
+      
+      def sub_section_id(options = {})
+        options[:id] ||= params[:id]
+        options[:id] ||= nested.parent_id if nested?
+        clean_id "#{controller_id}-#{options[:id]}-#{options[:sub_section]}-subsection"
       end
 
       def sub_form_id(options = {})
         options[:id] ||= params[:id]
-        options[:id] ||= params[:parent_id]
+        options[:id] ||= nested.parent_id if nested?
         clean_id "#{controller_id}-#{options[:id]}-#{options[:association]}-subform"
       end
-
+      
       def sub_form_list_id(options = {})
         options[:id] ||= params[:id]
-        options[:id] ||= params[:parent_id]
+        options[:id] ||= nested.parent_id if nested?
         clean_id "#{controller_id}-#{options[:id]}-#{options[:association]}-subform-list"
       end
 
       def element_messages_id(options = {})
         options[:action] ||= params[:action]
         options[:id] ||= params[:id]
-        options[:id] ||= params[:parent_id]
+        options[:id] ||= nested.parent_id if nested?
         clean_id "#{controller_id}-#{options[:action]}-#{options[:id]}-messages"
       end
 
       def action_iframe_id(options)
         "#{controller_id}-#{options[:action]}-#{options[:id]}-iframe"
+      end
+      
+      def scope_id(scope)
+        scope.gsub(/(\[|\])/, '_').gsub('__', '_').gsub(/_$/, '')
       end
 
       private

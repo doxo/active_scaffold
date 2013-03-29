@@ -5,9 +5,15 @@ module ActiveScaffold::Actions
     end
 
     def show
-      do_show
-      successful?
-      respond_to_action(:show)
+      # rest destroy falls back to rest show in case of disabled javascript
+      # just render action_confirmation message for destroy
+      unless params.delete :destroy_action
+        do_show
+        respond_to_action(:show)
+      else
+        @record = find_if_allowed(params[:id], :read) if params[:id] && params[:id] && params[:id].to_i > 0
+        action_confirmation_respond_to_html(:destroy)
+      end
     end
 
     protected
@@ -34,13 +40,18 @@ module ActiveScaffold::Actions
     # A simple method to retrieve and prepare a record for showing.
     # May be overridden to customize show routine
     def do_show
-      @record = find_if_allowed(params[:id], :read)
+      set_includes_for_columns(:show) if active_scaffold_config.actions.include? :list
+      klass = beginning_of_chain.includes(active_scaffold_includes)
+      @record = find_if_allowed(params[:id], :read, klass)
     end
 
     # The default security delegates to ActiveRecordPermissions.
     # You may override the method to customize.
-    def show_authorized?
-      authorized_for?(:crud_type => :read)
+    def show_authorized?(record = nil)
+      (record || self).send(:authorized_for?, :crud_type => :read)
+    end
+    def show_ignore?(record = nil)
+      !self.send(:authorized_for?, :crud_type => :read)
     end
     private 
     def show_authorized_filter
